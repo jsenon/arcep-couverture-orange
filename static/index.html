@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Couverture Orange 4G (donnees ARCEP)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --orange: #ff7900;
+    --orange-dark: #e56a00;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1c1f26;
+    --muted: #6b7280;
+    --good: #1a9e5c;
+    --mid: #d99a00;
+    --bad: #c0392b;
+    --none: #7a7a7a;
+    --border: #e3e5e9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--orange), var(--orange-dark));
+    color: white;
+    padding: 24px 20px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; opacity: 0.9; font-size: 14px; }
+  main {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    gap: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .form-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: end;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 140px; }
+  label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  input[type="text"], input[type="number"] {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+  }
+  input:focus { outline: 2px solid var(--orange); border-color: var(--orange); }
+  button {
+    background: var(--orange);
+    color: white;
+    border: none;
+    padding: 11px 20px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--orange-dark); }
+  button.secondary {
+    background: white;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { background: #f0f0f0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .paste-row { display: flex; gap: 8px; margin-top: 10px; }
+  .paste-row input { flex: 1; }
+  #map-wrap { position: relative; }
+  #map {
+    width: 100%;
+    height: 75vh;
+    min-height: 480px;
+    max-height: 900px;
+    border-radius: 10px;
+    z-index: 0;
+  }
+  .layer-toggle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 500;
+    background: rgba(255,255,255,0.95);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .legend-box {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    z-index: 500;
+    background: rgba(255,255,255,0.95);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .legend-box .legend-title { font-weight: 700; margin-bottom: 6px; color: var(--text); }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; }
+  #grid-loading {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 500;
+    background: rgba(255,255,255,0.95);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    display: none;
+  }
+  .map-links { margin-top: 10px; font-size: 13px; }
+  .map-links a { color: var(--orange-dark); text-decoration: none; font-weight: 600; }
+  .map-links a:hover { text-decoration: underline; }
+
+  #result { display: none; }
+  .status-banner {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+  }
+  .status-banner .dot { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+  .status-banner .txt strong { display: block; font-size: 17px; }
+  .status-banner .txt span { font-size: 13px; color: var(--muted); }
+  .status-good { background: #e9f8f0; }
+  .status-mid { background: #fff6e0; }
+  .status-bad { background: #fdecea; }
+  .status-none { background: #eeeeee; }
+  .dot-good { background: var(--good); }
+  .dot-mid { background: var(--mid); }
+  .dot-bad { background: var(--bad); }
+  .dot-none { background: var(--none); }
+
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+  .meta b { color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .bar-cell { width: 40%; }
+  .bar-track { background: #eee; border-radius: 5px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .op-orange-row td:first-child { font-weight: 700; }
+
+  #error-box {
+    display: none;
+    background: #fdecea;
+    color: #7a2119;
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+  #loading { display: none; font-size: 14px; color: var(--muted); }
+  footer { text-align: center; font-size: 12px; color: var(--muted); padding: 10px 20px 30px; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Couverture mobile Orange 4G</h1>
+  <p>Verifiez la couverture 4G d'Orange (et des autres operateurs) a des coordonnees GPS precises, a partir des donnees officielles ARCEP.</p>
+</header>
+
+<main>
+  <section class="card">
+    <div class="form-row">
+      <div class="field">
+        <label for="lat">Latitude</label>
+        <input type="text" id="lat" value="48.8583" inputmode="decimal">
+      </div>
+      <div class="field">
+        <label for="lon">Longitude</label>
+        <input type="text" id="lon" value="2.2944" inputmode="decimal">
+      </div>
+      <button id="check-btn">Verifier la couverture</button>
+    </div>
+    <div class="paste-row">
+      <input type="text" id="paste" placeholder="Ou collez 'latitude, longitude' ici (ex: 48.8583, 2.2944)">
+      <button class="secondary" id="paste-btn">Utiliser</button>
+    </div>
+    <p class="hint">Exemple pre-rempli : Tour Eiffel, Paris. Entrez vos propres coordonnees GPS (ex. relevees sur votre telephone) pour tester un lieu precis.</p>
+  </section>
+
+  <section class="card">
+    <div id="map-wrap">
+      <div id="map"></div>
+      <div class="layer-toggle">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="layer-toggle" checked>
+          Couche couverture Orange 4G
+        </label>
+      </div>
+      <div id="grid-loading">Chargement de la couche de couverture...</div>
+      <div id="zoom-hint" class="layer-toggle" style="display:none;top:56px;">Zoomez pour afficher la couche de couverture</div>
+      <div class="legend-box">
+        <div class="legend-title">Niveau de couverture (Orange, ARCEP)</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#864701"></div>Tres bonne couverture</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#c06600"></div>Bonne couverture</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#ff8700"></div>Couverture limitee</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#f1ede6"></div>Zone non couverte</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:#b0b0b0"></div>Non modelisee</div>
+        <div id="cell-size-note" style="margin-top:6px;color:var(--muted);font-size:11px;"></div>
+      </div>
+    </div>
+    <div class="map-links">
+      <a id="open-maps" href="https://www.google.com/maps?q=48.8583,2.2944" target="_blank" rel="noopener">Ouvrir ce point dans Google Maps &#8599;</a>
+    </div>
+  </section>
+
+  <div id="loading">Recherche des donnees ARCEP en cours...</div>
+  <div id="error-box"></div>
+
+  <section class="card" id="result">
+    <div id="status-banner" class="status-banner">
+      <div class="dot" id="status-dot"></div>
+      <div class="txt">
+        <strong id="status-title"></strong>
+        <span id="status-sub"></span>
+      </div>
+    </div>
+    <div class="meta" id="meta-info"></div>
+    <table>
+      <thead>
+        <tr><th>Operateur</th><th class="bar-cell">Couverture 4G</th><th>Score</th><th>Niveau</th></tr>
+      </thead>
+      <tbody id="op-table-body"></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  Donnees : <a href="https://monreseaumobile.arcep.fr/" target="_blank" rel="noopener">ARCEP - Mon reseau mobile</a>
+  (couverture theorique) &middot; geocodage :
+  <a href="https://api.gouv.fr/documentation/api-adresse" target="_blank" rel="noopener">Base Adresse Nationale</a>
+  &amp; <a href="https://geo.api.gouv.fr/" target="_blank" rel="noopener">geo.api.gouv.fr</a>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const OPERATOR_ORDER = ["20801", "20810", "20815", "20820"];
+const OPERATOR_COLORS = {
+  "20801": "#ff7900",
+  "20810": "#e2001a",
+  "20815": "#a52acb",
+  "20820": "#0087cd",
+};
+
+// Seuils exacts du site officiel ARCEP : > 90 TBC, [50-90] Bonne, ]0-50[ Limitee, 0 Non couverte.
+function barColorForPct(pct) {
+  if (pct > 90) return "#1a9e5c";
+  if (pct >= 50) return "#d99a00";
+  if (pct > 0) return "#c0392b";
+  return "#7a7a7a";
+}
+
+const map = L.map("map").setView([48.8583, 2.2944], 16);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+}).addTo(map);
+window.addEventListener("resize", () => map.invalidateSize());
+
+let marker = L.marker([48.8583, 2.2944]).addTo(map);
+let gridLayer = L.layerGroup().addTo(map);
+let gridRequestToken = 0;
+let lastLat = 48.8583;
+let lastLon = 2.2944;
+
+const MIN_ZOOM_FOR_LAYER = 12;
+let moveDebounceTimer = null;
+
+document.getElementById("layer-toggle").addEventListener("change", (e) => {
+  if (e.target.checked) {
+    map.addLayer(gridLayer);
+    refreshCoverageLayer();
+  } else {
+    map.removeLayer(gridLayer);
+  }
+});
+
+map.on("moveend", () => {
+  clearTimeout(moveDebounceTimer);
+  moveDebounceTimer = setTimeout(refreshCoverageLayer, 450);
+});
+
+function updateMap(lat, lon) {
+  map.setView([lat, lon], 16);
+  marker.setLatLng([lat, lon]);
+  const link = document.getElementById("open-maps");
+  link.href = `https://www.google.com/maps?q=${lat},${lon}`;
+  refreshCoverageLayer();
+}
+
+function refreshCoverageLayer() {
+  const hintEl = document.getElementById("zoom-hint");
+  if (!document.getElementById("layer-toggle").checked) {
+    hintEl.style.display = "none";
+    return;
+  }
+  if (map.getZoom() < MIN_ZOOM_FOR_LAYER) {
+    gridLayer.clearLayers();
+    hintEl.style.display = "block";
+    document.getElementById("grid-loading").style.display = "none";
+    return;
+  }
+  hintEl.style.display = "none";
+  const b = map.getBounds();
+  loadCoverageForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
+}
+
+async function loadCoverageForBounds(south, west, north, east) {
+  const myToken = ++gridRequestToken;
+  const loadingEl = document.getElementById("grid-loading");
+  loadingEl.style.display = "block";
+  try {
+    const url =
+      `${location.origin}/api/couverture_bbox?south=${south}&west=${west}` +
+      `&north=${north}&east=${east}&operator=20801`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (myToken !== gridRequestToken) return; // une requete plus recente a pris le relais
+    if (!data.success) return;
+    gridLayer.clearLayers();
+
+    if (data.mode === "vector") {
+      document.getElementById("cell-size-note").textContent =
+        "Source : polygones officiels ARCEP (open data, departement de la Vienne) — forme exacte, aucun echantillonnage.";
+      L.geoJSON(data.geojson, {
+        style: (feature) => ({
+          color: feature.properties.color,
+          weight: 0,
+          fillColor: feature.properties.color,
+          fillOpacity: 0.55,
+        }),
+        onEachFeature: (feature, layer) => {
+          layer.bindTooltip(`Orange 4G : ${feature.properties.label} — donnees officielles ARCEP (Vienne)`);
+        },
+      }).addTo(gridLayer);
+    } else if (data.mode === "grid" && data.points) {
+      const latHalf = (data.cell_lat_deg || 0.001) / 2;
+      const lonHalf = (data.cell_lon_deg || 0.001) / 2;
+      const cellSizeText =
+        data.cell_size_m && data.cell_size_m > data.native_cell_m
+          ? `cellule ${Math.round(data.cell_size_m)} m (agregat de plusieurs mailles natives de ${data.native_cell_m} m)`
+          : `cellule ${Math.round(data.cell_size_m || data.native_cell_m)} m (resolution native ARCEP)`;
+      document.getElementById("cell-size-note").textContent =
+        "Source : estimation par point (API du site ARCEP) — " + cellSizeText;
+      for (const p of data.points) {
+        const bounds = [
+          [p.lat - latHalf, p.lon - lonHalf],
+          [p.lat + latHalf, p.lon + lonHalf],
+        ];
+        const rect = L.rectangle(bounds, {
+          color: p.color,
+          weight: 0,
+          fillColor: p.color,
+          fillOpacity: 0.55,
+        });
+        const pctText = p.pct === null || p.pct === undefined ? "n/d" : `${p.pct}%`;
+        rect.bindTooltip(`Orange 4G : ${p.label} (${pctText}) &mdash; ${cellSizeText}`);
+        rect.addTo(gridLayer);
+      }
+    }
+  } catch (e) {
+    // silencieux : la couche est une aide visuelle, le resultat texte reste la source fiable
+  } finally {
+    if (myToken === gridRequestToken) loadingEl.style.display = "none";
+  }
+}
+
+function statusClassFor(pct) {
+  if (pct > 90) return { cls: "good", label: "Tres bonne couverture" };
+  if (pct >= 50) return { cls: "mid", label: "Bonne couverture" };
+  if (pct > 0) return { cls: "bad", label: "Couverture limitee" };
+  return { cls: "none", label: "Zone non couverte" };
+}
+
+function renderResult(data) {
+  const resultBox = document.getElementById("result");
+  const errorBox = document.getElementById("error-box");
+  errorBox.style.display = "none";
+
+  if (!data.success) {
+    resultBox.style.display = "none";
+    errorBox.textContent = data.message || "Erreur inconnue.";
+    errorBox.style.display = "block";
+    return;
+  }
+
+  const NIVEAU_NOMINAL_PCT = { TBC: 100, BC: 70, CL: 25, non_couverte: 0 };
+
+  const orange = data.orange;
+  const orangeIsOfficial = orange && orange.source === "officiel_arcep_vienne";
+  const orangeEffectivePct = orange ? (orangeIsOfficial ? NIVEAU_NOMINAL_PCT[orange.niveau] : orange.pct) : 0;
+  const { cls } = statusClassFor(orangeEffectivePct);
+
+  const banner = document.getElementById("status-banner");
+  banner.className = "status-banner status-" + cls;
+  document.getElementById("status-dot").className = "dot dot-" + cls;
+  document.getElementById("status-title").textContent = !orange
+    ? "Donnees Orange indisponibles"
+    : orangeIsOfficial
+      ? `Orange 4G : ${orange.label}`
+      : `Orange 4G : ${orange.label} (${orange.pct}%)`;
+  const precisionText = {
+    point: "Donnee ARCEP au point GPS exact que vous avez saisi.",
+    adresse_proche: "Point exact sans donnee ARCEP : estimation a l'adresse connue la plus proche.",
+    commune: "Aucune donnee au point precis : estimation moyenne de toute la commune (peut differer fortement d'un hameau a l'autre).",
+    officiel_vienne: "Polygone officiel ARCEP (open data, departement de la Vienne).",
+  };
+  document.getElementById("status-sub").textContent =
+    (orangeIsOfficial ? "Source : polygones officiels ARCEP (open data, Vienne). " : "") +
+    (precisionText[data.precision] || "");
+
+  let metaHtml = "";
+  if (data.precision === "adresse_proche") {
+    metaHtml += `<div><b>Adresse de reference :</b> ${data.address_label}</div>`;
+    if (data.distance_m !== null && data.distance_m !== undefined) {
+      metaHtml += `<div><b>Distance au point saisi :</b> ${Math.round(data.distance_m)} m</div>`;
+    }
+  }
+  if (data.commune) {
+    metaHtml += `<div><b>Commune :</b> ${data.commune} (INSEE ${data.citycode})</div>`;
+  }
+  document.getElementById("meta-info").innerHTML = metaHtml;
+
+  const tbody = document.getElementById("op-table-body");
+  tbody.innerHTML = "";
+  const ops = [...data.operators].sort(
+    (a, b) => OPERATOR_ORDER.indexOf(a.code) - OPERATOR_ORDER.indexOf(b.code)
+  );
+  for (const op of ops) {
+    const tr = document.createElement("tr");
+    if (op.code === "20801") tr.classList.add("op-orange-row");
+    const isOfficial = op.source === "officiel_arcep_vienne";
+    const effectivePct = isOfficial ? NIVEAU_NOMINAL_PCT[op.niveau] : op.pct;
+    const color = barColorForPct(effectivePct);
+    const scoreText = isOfficial ? "officiel" : `${op.pct}%`;
+    tr.innerHTML = `
+      <td>${op.name}</td>
+      <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${effectivePct}%;background:${color}"></div></div></td>
+      <td>${scoreText}</td>
+      <td>${op.label}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  resultBox.style.display = "block";
+}
+
+async function checkCoverage() {
+  const lat = parseFloat(document.getElementById("lat").value.replace(",", "."));
+  const lon = parseFloat(document.getElementById("lon").value.replace(",", "."));
+
+  const errorBox = document.getElementById("error-box");
+  const resultBox = document.getElementById("result");
+  const loading = document.getElementById("loading");
+
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    errorBox.textContent = "Latitude / longitude invalides.";
+    errorBox.style.display = "block";
+    resultBox.style.display = "none";
+    return;
+  }
+
+  updateMap(lat, lon);
+  lastLat = lat;
+  lastLon = lon;
+  errorBox.style.display = "none";
+  resultBox.style.display = "none";
+  loading.style.display = "block";
+
+  if (location.protocol !== "http:" && location.protocol !== "https:") {
+    loading.style.display = "none";
+    errorBox.innerHTML =
+      "Cette page a ete ouverte directement comme fichier, sans le serveur local : " +
+      "la verification de couverture ne peut pas fonctionner ainsi.<br>" +
+      "Lancez <code>python server.py</code> dans le dossier du projet, puis ouvrez " +
+      "<b>http://localhost:8000</b> dans votre navigateur (pas le fichier index.html directement).";
+    errorBox.style.display = "block";
+    return;
+  }
+
+  try {
+    const res = await fetch(`${location.origin}/api/couverture?lat=${lat}&lon=${lon}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    renderResult(data);
+  } catch (e) {
+    errorBox.innerHTML =
+      "Impossible de contacter le serveur local (" + e + ").<br>" +
+      "Verifiez qu'il tourne bien : lancez <code>python server.py</code> dans le dossier du projet, " +
+      "puis ouvrez <b>http://localhost:8000</b>.";
+    errorBox.style.display = "block";
+  } finally {
+    loading.style.display = "none";
+  }
+}
+
+document.getElementById("check-btn").addEventListener("click", checkCoverage);
+
+document.getElementById("paste-btn").addEventListener("click", () => {
+  const raw = document.getElementById("paste").value;
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 2) {
+    document.getElementById("lat").value = parts[0];
+    document.getElementById("lon").value = parts[1];
+    checkCoverage();
+  }
+});
+
+document.getElementById("lat").addEventListener("keydown", (e) => { if (e.key === "Enter") checkCoverage(); });
+document.getElementById("lon").addEventListener("keydown", (e) => { if (e.key === "Enter") checkCoverage(); });
+document.getElementById("paste").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("paste-btn").click(); });
+
+checkCoverage();
+</script>
+
+</body>
+</html>
