@@ -201,19 +201,19 @@
     <div class="form-row">
       <div class="field">
         <label for="lat">Latitude</label>
-        <input type="text" id="lat" value="48.8583" inputmode="decimal">
+        <input type="text" id="lat" inputmode="decimal">
       </div>
       <div class="field">
         <label for="lon">Longitude</label>
-        <input type="text" id="lon" value="2.2944" inputmode="decimal">
+        <input type="text" id="lon" inputmode="decimal">
       </div>
       <button id="check-btn">Verifier la couverture</button>
     </div>
     <div class="paste-row">
-      <input type="text" id="paste" placeholder="Ou collez 'latitude, longitude' ici (ex: 48.8583, 2.2944)">
+      <input type="text" id="paste" placeholder="Ou collez 'latitude, longitude' ici (ex: 46.5802, 0.3404)">
       <button class="secondary" id="paste-btn">Utiliser</button>
     </div>
-    <p class="hint">Exemple pre-rempli : Tour Eiffel, Paris. Entrez vos propres coordonnees GPS (ex. relevees sur votre telephone) pour tester un lieu precis.</p>
+    <p class="hint">Exemple pre-rempli : Poitiers (Vienne). Entrez vos propres coordonnees GPS (ex. relevees sur votre telephone) pour tester un lieu precis.</p>
   </section>
 
   <section class="card">
@@ -226,7 +226,7 @@
       <div class="legend-box" id="legend-box"></div>
     </div>
     <div class="map-links">
-      <a id="open-maps" href="https://www.google.com/maps?q=48.8583,2.2944" target="_blank" rel="noopener">Ouvrir ce point dans Google Maps &#8599;</a>
+      <a id="open-maps" href="https://www.google.com/maps" target="_blank" rel="noopener">Ouvrir ce point dans Google Maps &#8599;</a>
     </div>
   </section>
 
@@ -272,14 +272,20 @@ function barColorForPct(pct) {
   return "#7a7a7a";
 }
 
-const map = L.map("map").setView([48.8583, 2.2944], 16);
+// Vue de depart : Poitiers (prefecture de la Vienne), zoom assez large pour voir
+// la couverture autour sans descendre au niveau de la rue.
+const START_VIEW = { lat: 46.5802, lon: 0.3404, zoom: 12 };
+document.getElementById("lat").value = START_VIEW.lat;
+document.getElementById("lon").value = START_VIEW.lon;
+
+const map = L.map("map").setView([START_VIEW.lat, START_VIEW.lon], START_VIEW.zoom);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 }).addTo(map);
 window.addEventListener("resize", () => map.invalidateSize());
 
-let marker = L.marker([48.8583, 2.2944]).addTo(map);
+let marker = L.marker([START_VIEW.lat, START_VIEW.lon]).addTo(map);
 let lastResult = null;
 let checkToken = 0;
 
@@ -373,8 +379,8 @@ map.on("moveend", () => {
   moveDebounceTimer = setTimeout(() => refreshCoverageLayers(), 450);
 });
 
-function updateMap(lat, lon) {
-  map.setView([lat, lon], 16);
+function updateMap(lat, lon, zoom = 16) {
+  map.setView([lat, lon], zoom);
   marker.setLatLng([lat, lon]);
   const link = document.getElementById("open-maps");
   link.href = `https://www.google.com/maps?q=${lat},${lon}`;
@@ -571,7 +577,7 @@ function renderResult(data) {
   resultBox.style.display = "block";
 }
 
-async function checkCoverage() {
+async function checkCoverage(zoom = 16) {
   const lat = parseFloat(document.getElementById("lat").value.replace(",", "."));
   const lon = parseFloat(document.getElementById("lon").value.replace(",", "."));
 
@@ -586,9 +592,7 @@ async function checkCoverage() {
     return;
   }
 
-  updateMap(lat, lon);
-  lastLat = lat;
-  lastLon = lon;
+  updateMap(lat, lon, zoom);
   errorBox.style.display = "none";
   resultBox.style.display = "none";
   loading.style.display = "block";
@@ -625,7 +629,7 @@ async function checkCoverage() {
   }
 }
 
-document.getElementById("check-btn").addEventListener("click", checkCoverage);
+document.getElementById("check-btn").addEventListener("click", () => checkCoverage());
 
 document.getElementById("paste-btn").addEventListener("click", () => {
   const raw = document.getElementById("paste").value;
@@ -642,7 +646,7 @@ document.getElementById("lon").addEventListener("keydown", (e) => { if (e.key ==
 document.getElementById("paste").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("paste-btn").click(); });
 
 renderLegend();
-checkCoverage();
+checkCoverage(START_VIEW.zoom);
 </script>
 
 </body>

@@ -147,9 +147,15 @@ class LocalOfficialData:
         from shapely.geometry import box
         from shapely.ops import transform as shp_transform
 
-        x0, y0 = self.to_lambert93.transform(west, south)
-        x1, y1 = self.to_lambert93.transform(east, north)
-        clip_box = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+        # Lambert-93 est legerement tourne par rapport a lat/lon : les 4 coins sont
+        # necessaires pour que la boite de decoupe couvre toute la vue.
+        corners = [
+            self.to_lambert93.transform(lon, lat)
+            for lon, lat in ((west, south), (east, south), (west, north), (east, north))
+        ]
+        xs = [c[0] for c in corners]
+        ys = [c[1] for c in corners]
+        clip_box = box(min(xs), min(ys), max(xs), max(ys))
 
         features = []
         for _, row in self.layers[operator_code].iterrows():
