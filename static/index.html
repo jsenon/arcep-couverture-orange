@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Couverture Orange 4G (donnees ARCEP)</title>
+<title>Couverture mobile 4G (donnees ARCEP)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root {
@@ -101,10 +101,14 @@
     padding: 8px 12px;
     font-size: 13px;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
+  .layer-toggle label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .layer-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  #zoom-hint { display: none; font-size: 12px; color: var(--muted); }
   .legend-box {
     position: absolute;
     bottom: 10px;
@@ -118,7 +122,9 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
   .legend-box .legend-title { font-weight: 700; margin-bottom: 6px; color: var(--text); }
-  .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .legend-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 3px 0; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-op { min-width: 48px; }
   .legend-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.15); flex-shrink: 0; }
   #grid-loading {
     position: absolute;
@@ -166,7 +172,9 @@
   .bar-cell { width: 40%; }
   .bar-track { background: #eee; border-radius: 5px; height: 10px; overflow: hidden; }
   .bar-fill { height: 100%; border-radius: 5px; }
-  .op-orange-row td:first-child { font-weight: 700; }
+  .op-selected-row td:first-child { font-weight: 700; }
+  #status-banners .status-banner { margin-bottom: 10px; }
+  #status-banners { margin-bottom: 6px; }
 
   #error-box {
     display: none;
@@ -184,8 +192,8 @@
 <body>
 
 <header>
-  <h1>Couverture mobile Orange 4G</h1>
-  <p>Verifiez la couverture 4G d'Orange (et des autres operateurs) a des coordonnees GPS precises, a partir des donnees officielles ARCEP.</p>
+  <h1>Couverture mobile 4G</h1>
+  <p>Verifiez la couverture 4G d'Orange et de SFR (et des autres operateurs) a des coordonnees GPS precises, a partir des donnees officielles ARCEP.</p>
 </header>
 
 <main>
@@ -211,23 +219,11 @@
   <section class="card">
     <div id="map-wrap">
       <div id="map"></div>
-      <div class="layer-toggle">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="layer-toggle" checked>
-          Couche couverture Orange 4G
-        </label>
+      <div class="layer-toggle" id="layer-toggles">
+        <div id="zoom-hint">Zoomez pour afficher les couches de couverture</div>
       </div>
       <div id="grid-loading">Chargement de la couche de couverture...</div>
-      <div id="zoom-hint" class="layer-toggle" style="display:none;top:56px;">Zoomez pour afficher la couche de couverture</div>
-      <div class="legend-box">
-        <div class="legend-title">Niveau de couverture (Orange, ARCEP)</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#864701"></div>Tres bonne couverture</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#c06600"></div>Bonne couverture</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#ff8700"></div>Couverture limitee</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#f1ede6"></div>Zone non couverte</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:#b0b0b0"></div>Non modelisee</div>
-        <div id="cell-size-note" style="margin-top:6px;color:var(--muted);font-size:11px;"></div>
-      </div>
+      <div class="legend-box" id="legend-box"></div>
     </div>
     <div class="map-links">
       <a id="open-maps" href="https://www.google.com/maps?q=48.8583,2.2944" target="_blank" rel="noopener">Ouvrir ce point dans Google Maps &#8599;</a>
@@ -238,13 +234,7 @@
   <div id="error-box"></div>
 
   <section class="card" id="result">
-    <div id="status-banner" class="status-banner">
-      <div class="dot" id="status-dot"></div>
-      <div class="txt">
-        <strong id="status-title"></strong>
-        <span id="status-sub"></span>
-      </div>
-    </div>
+    <div id="status-banners"></div>
     <div class="meta" id="meta-info"></div>
     <table>
       <thead>
@@ -265,12 +255,14 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const OPERATOR_ORDER = ["20801", "20810", "20815", "20820"];
-const OPERATOR_COLORS = {
-  "20801": "#ff7900",
-  "20810": "#e2001a",
-  "20815": "#a52acb",
-  "20820": "#0087cd",
-};
+
+// Couches de couverture affichables sur la carte, avec la palette officielle
+// ARCEP de chaque operateur (TBC = tres bonne, BC = bonne, CL = limitee).
+const LAYERS = [
+  { code: "20801", name: "Orange", palette: { TBC: "#864701", BC: "#c06600", CL: "#ff8700" }, defaultOn: true },
+  { code: "20810", name: "SFR", palette: { TBC: "#880100", BC: "#b54241", CL: "#e47170" }, defaultOn: false },
+];
+const NIVEAU_NOMINAL_PCT = { TBC: 100, BC: 70, CL: 25, non_couverte: 0 };
 
 // Seuils exacts du site officiel ARCEP : > 90 TBC, [50-90] Bonne, ]0-50[ Limitee, 0 Non couverte.
 function barColorForPct(pct) {
@@ -288,26 +280,97 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 window.addEventListener("resize", () => map.invalidateSize());
 
 let marker = L.marker([48.8583, 2.2944]).addTo(map);
-let gridLayer = L.layerGroup().addTo(map);
-let gridRequestToken = 0;
-let lastLat = 48.8583;
-let lastLon = 2.2944;
+let lastResult = null;
+let checkToken = 0;
 
 const MIN_ZOOM_FOR_LAYER = 12;
 let moveDebounceTimer = null;
+let pendingLoads = 0;
 
-document.getElementById("layer-toggle").addEventListener("change", (e) => {
-  if (e.target.checked) {
-    map.addLayer(gridLayer);
-    refreshCoverageLayer();
-  } else {
-    map.removeLayer(gridLayer);
-  }
+// un groupe + un pane dedie par operateur : l'ordre d'empilement reste stable
+// quel que soit l'ordre d'arrivee des reponses.
+const layerState = {};
+LAYERS.forEach((layer, i) => {
+  const paneName = "coverage-" + layer.code;
+  map.createPane(paneName);
+  map.getPane(paneName).style.zIndex = 410 + i;
+  layerState[layer.code] = { group: L.layerGroup().addTo(map), pane: paneName, token: 0, note: "" };
 });
+
+const togglesEl = document.getElementById("layer-toggles");
+const zoomHintEl = document.getElementById("zoom-hint");
+for (const layer of LAYERS) {
+  const label = document.createElement("label");
+  label.innerHTML =
+    `<input type="checkbox" id="layer-toggle-${layer.code}"${layer.defaultOn ? " checked" : ""}>` +
+    `<span class="layer-dot" style="background:${layer.palette.TBC}"></span>${layer.name} 4G`;
+  togglesEl.insertBefore(label, zoomHintEl);
+  label.querySelector("input").addEventListener("change", () => onLayerToggled(layer));
+}
+
+function isEnabled(layer) {
+  return document.getElementById("layer-toggle-" + layer.code).checked;
+}
+
+function enabledLayers() {
+  return LAYERS.filter(isEnabled);
+}
+
+function setLoading(delta) {
+  pendingLoads = Math.max(0, pendingLoads + delta);
+  document.getElementById("grid-loading").style.display = pendingLoads > 0 ? "block" : "none";
+}
+
+function renderLegend() {
+  const box = document.getElementById("legend-box");
+  const active = enabledLayers();
+  if (active.length === 0) {
+    box.style.display = "none";
+    return;
+  }
+  const levels = [["TBC", "Tres bonne"], ["BC", "Bonne"], ["CL", "Limitee"]];
+  let html = '<div class="legend-title">Niveau de couverture (ARCEP)</div>';
+  for (const layer of active) {
+    html +=
+      `<div class="legend-row"><b class="legend-op">${layer.name}</b>` +
+      levels
+        .map(
+          ([key, text]) =>
+            `<div class="legend-item"><div class="legend-swatch" style="background:${layer.palette[key]}"></div>${text}</div>`
+        )
+        .join("") +
+      "</div>";
+  }
+  html +=
+    '<div class="legend-row">' +
+    '<div class="legend-item"><div class="legend-swatch" style="background:#f1ede6"></div>Zone non couverte</div>' +
+    '<div class="legend-item"><div class="legend-swatch" style="background:#b0b0b0"></div>Non modelisee</div>' +
+    "</div>";
+  const notes = active.map((l) => layerState[l.code].note).filter(Boolean);
+  if (notes.length) {
+    html += `<div style="margin-top:6px;color:var(--muted);font-size:11px;">${notes.join("<br>")}</div>`;
+  }
+  box.innerHTML = html;
+  box.style.display = "block";
+}
+
+function onLayerToggled(layer) {
+  const state = layerState[layer.code];
+  if (isEnabled(layer)) {
+    refreshCoverageLayers(layer);
+  } else {
+    state.token++; // annule un chargement en cours
+    state.group.clearLayers();
+    state.note = "";
+  }
+  if (enabledLayers().length === 0) zoomHintEl.style.display = "none";
+  renderLegend();
+  renderSelection();
+}
 
 map.on("moveend", () => {
   clearTimeout(moveDebounceTimer);
-  moveDebounceTimer = setTimeout(refreshCoverageLayer, 450);
+  moveDebounceTimer = setTimeout(() => refreshCoverageLayers(), 450);
 });
 
 function updateMap(lat, lon) {
@@ -315,54 +378,60 @@ function updateMap(lat, lon) {
   marker.setLatLng([lat, lon]);
   const link = document.getElementById("open-maps");
   link.href = `https://www.google.com/maps?q=${lat},${lon}`;
-  refreshCoverageLayer();
+  refreshCoverageLayers();
 }
 
-function refreshCoverageLayer() {
-  const hintEl = document.getElementById("zoom-hint");
-  if (!document.getElementById("layer-toggle").checked) {
-    hintEl.style.display = "none";
+function refreshCoverageLayers(onlyLayer) {
+  const active = enabledLayers();
+  if (active.length === 0) {
+    zoomHintEl.style.display = "none";
     return;
   }
   if (map.getZoom() < MIN_ZOOM_FOR_LAYER) {
-    gridLayer.clearLayers();
-    hintEl.style.display = "block";
-    document.getElementById("grid-loading").style.display = "none";
+    for (const layer of active) {
+      layerState[layer.code].token++;
+      layerState[layer.code].group.clearLayers();
+    }
+    zoomHintEl.style.display = "block";
     return;
   }
-  hintEl.style.display = "none";
+  zoomHintEl.style.display = "none";
   const b = map.getBounds();
-  loadCoverageForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
+  for (const layer of onlyLayer ? [onlyLayer] : active) {
+    loadCoverageForBounds(layer, b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
+  }
 }
 
-async function loadCoverageForBounds(south, west, north, east) {
-  const myToken = ++gridRequestToken;
-  const loadingEl = document.getElementById("grid-loading");
-  loadingEl.style.display = "block";
+async function loadCoverageForBounds(layer, south, west, north, east) {
+  const state = layerState[layer.code];
+  const myToken = ++state.token;
+  setLoading(+1);
   try {
     const url =
       `${location.origin}/api/couverture_bbox?south=${south}&west=${west}` +
-      `&north=${north}&east=${east}&operator=20801`;
+      `&north=${north}&east=${east}&operator=${layer.code}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (myToken !== gridRequestToken) return; // une requete plus recente a pris le relais
+    if (myToken !== state.token) return; // une requete plus recente a pris le relais
     if (!data.success) return;
-    gridLayer.clearLayers();
+    state.group.clearLayers();
 
     if (data.mode === "vector") {
-      document.getElementById("cell-size-note").textContent =
-        "Source : polygones officiels ARCEP (open data, departement de la Vienne) — forme exacte, aucun echantillonnage.";
+      state.note = `${layer.name} : polygones officiels ARCEP (open data, Vienne), forme exacte sans echantillonnage.`;
       L.geoJSON(data.geojson, {
+        pane: state.pane,
         style: (feature) => ({
           color: feature.properties.color,
           weight: 0,
           fillColor: feature.properties.color,
           fillOpacity: 0.55,
         }),
-        onEachFeature: (feature, layer) => {
-          layer.bindTooltip(`Orange 4G : ${feature.properties.label} — donnees officielles ARCEP (Vienne)`);
+        onEachFeature: (feature, featureLayer) => {
+          featureLayer.bindTooltip(
+            `${layer.name} 4G : ${feature.properties.label} — donnees officielles ARCEP (Vienne)`
+          );
         },
-      }).addTo(gridLayer);
+      }).addTo(state.group);
     } else if (data.mode === "grid" && data.points) {
       const latHalf = (data.cell_lat_deg || 0.001) / 2;
       const lonHalf = (data.cell_lon_deg || 0.001) / 2;
@@ -370,28 +439,29 @@ async function loadCoverageForBounds(south, west, north, east) {
         data.cell_size_m && data.cell_size_m > data.native_cell_m
           ? `cellule ${Math.round(data.cell_size_m)} m (agregat de plusieurs mailles natives de ${data.native_cell_m} m)`
           : `cellule ${Math.round(data.cell_size_m || data.native_cell_m)} m (resolution native ARCEP)`;
-      document.getElementById("cell-size-note").textContent =
-        "Source : estimation par point (API du site ARCEP) — " + cellSizeText;
+      state.note = `${layer.name} : estimation par point (API du site ARCEP), ${cellSizeText}.`;
       for (const p of data.points) {
         const bounds = [
           [p.lat - latHalf, p.lon - lonHalf],
           [p.lat + latHalf, p.lon + lonHalf],
         ];
         const rect = L.rectangle(bounds, {
+          pane: state.pane,
           color: p.color,
           weight: 0,
           fillColor: p.color,
           fillOpacity: 0.55,
         });
         const pctText = p.pct === null || p.pct === undefined ? "n/d" : `${p.pct}%`;
-        rect.bindTooltip(`Orange 4G : ${p.label} (${pctText}) &mdash; ${cellSizeText}`);
-        rect.addTo(gridLayer);
+        rect.bindTooltip(`${layer.name} 4G : ${p.label} (${pctText}) &mdash; ${cellSizeText}`);
+        rect.addTo(state.group);
       }
     }
+    renderLegend();
   } catch (e) {
     // silencieux : la couche est une aide visuelle, le resultat texte reste la source fiable
   } finally {
-    if (myToken === gridRequestToken) loadingEl.style.display = "none";
+    setLoading(-1);
   }
 }
 
@@ -402,42 +472,67 @@ function statusClassFor(pct) {
   return { cls: "none", label: "Zone non couverte" };
 }
 
+function effectivePctOf(op) {
+  return op.source === "officiel_arcep_vienne" ? NIVEAU_NOMINAL_PCT[op.niveau] : op.pct;
+}
+
+// Un bandeau de resultat par operateur dont la couche est cochee, et mise en
+// avant des lignes correspondantes dans le tableau comparatif.
+function renderSelection() {
+  const container = document.getElementById("status-banners");
+  container.innerHTML = "";
+  const enabledCodes = enabledLayers().map((l) => l.code);
+  document.querySelectorAll("#op-table-body tr").forEach((tr) => {
+    tr.classList.toggle("op-selected-row", enabledCodes.includes(tr.dataset.code));
+  });
+  if (!lastResult) return;
+
+  const data = lastResult;
+  const precisionText = {
+    point: "Donnee ARCEP au point GPS exact que vous avez saisi.",
+    adresse_proche: "Point exact sans donnee ARCEP : estimation a l'adresse connue la plus proche.",
+    commune: "Aucune donnee au point precis : estimation moyenne de toute la commune (peut differer fortement d'un hameau a l'autre).",
+  };
+
+  for (const layer of enabledLayers()) {
+    const op = data.operators.find((o) => o.code === layer.code);
+    const banner = document.createElement("div");
+    if (!op) {
+      banner.className = "status-banner status-none";
+      banner.innerHTML =
+        `<div class="dot dot-none"></div><div class="txt"><strong>${layer.name} 4G : donnees indisponibles</strong></div>`;
+      container.appendChild(banner);
+      continue;
+    }
+    const isOfficial = op.source === "officiel_arcep_vienne";
+    const { cls } = statusClassFor(effectivePctOf(op));
+    const title = isOfficial
+      ? `${layer.name} 4G : ${op.label}`
+      : `${layer.name} 4G : ${op.label} (${op.pct}%)`;
+    const sub = isOfficial
+      ? "Source : polygones officiels ARCEP (open data, departement de la Vienne), au point GPS exact saisi."
+      : precisionText[data.precision] || "";
+    banner.className = "status-banner status-" + cls;
+    banner.innerHTML =
+      `<div class="dot dot-${cls}"></div><div class="txt"><strong>${title}</strong><span>${sub}</span></div>`;
+    container.appendChild(banner);
+  }
+}
+
 function renderResult(data) {
   const resultBox = document.getElementById("result");
   const errorBox = document.getElementById("error-box");
   errorBox.style.display = "none";
 
   if (!data.success) {
+    lastResult = null;
     resultBox.style.display = "none";
     errorBox.textContent = data.message || "Erreur inconnue.";
     errorBox.style.display = "block";
     return;
   }
 
-  const NIVEAU_NOMINAL_PCT = { TBC: 100, BC: 70, CL: 25, non_couverte: 0 };
-
-  const orange = data.orange;
-  const orangeIsOfficial = orange && orange.source === "officiel_arcep_vienne";
-  const orangeEffectivePct = orange ? (orangeIsOfficial ? NIVEAU_NOMINAL_PCT[orange.niveau] : orange.pct) : 0;
-  const { cls } = statusClassFor(orangeEffectivePct);
-
-  const banner = document.getElementById("status-banner");
-  banner.className = "status-banner status-" + cls;
-  document.getElementById("status-dot").className = "dot dot-" + cls;
-  document.getElementById("status-title").textContent = !orange
-    ? "Donnees Orange indisponibles"
-    : orangeIsOfficial
-      ? `Orange 4G : ${orange.label}`
-      : `Orange 4G : ${orange.label} (${orange.pct}%)`;
-  const precisionText = {
-    point: "Donnee ARCEP au point GPS exact que vous avez saisi.",
-    adresse_proche: "Point exact sans donnee ARCEP : estimation a l'adresse connue la plus proche.",
-    commune: "Aucune donnee au point precis : estimation moyenne de toute la commune (peut differer fortement d'un hameau a l'autre).",
-    officiel_vienne: "Polygone officiel ARCEP (open data, departement de la Vienne).",
-  };
-  document.getElementById("status-sub").textContent =
-    (orangeIsOfficial ? "Source : polygones officiels ARCEP (open data, Vienne). " : "") +
-    (precisionText[data.precision] || "");
+  lastResult = data;
 
   let metaHtml = "";
   if (data.precision === "adresse_proche") {
@@ -458,9 +553,9 @@ function renderResult(data) {
   );
   for (const op of ops) {
     const tr = document.createElement("tr");
-    if (op.code === "20801") tr.classList.add("op-orange-row");
+    tr.dataset.code = op.code;
     const isOfficial = op.source === "officiel_arcep_vienne";
-    const effectivePct = isOfficial ? NIVEAU_NOMINAL_PCT[op.niveau] : op.pct;
+    const effectivePct = effectivePctOf(op);
     const color = barColorForPct(effectivePct);
     const scoreText = isOfficial ? "officiel" : `${op.pct}%`;
     tr.innerHTML = `
@@ -472,6 +567,7 @@ function renderResult(data) {
     tbody.appendChild(tr);
   }
 
+  renderSelection();
   resultBox.style.display = "block";
 }
 
@@ -508,21 +604,24 @@ async function checkCoverage() {
     return;
   }
 
+  const myToken = ++checkToken;
   try {
     const res = await fetch(`${location.origin}/api/couverture?lat=${lat}&lon=${lon}`);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
     const data = await res.json();
+    if (myToken !== checkToken) return; // une verification plus recente a pris le relais
     renderResult(data);
   } catch (e) {
+    if (myToken !== checkToken) return;
     errorBox.innerHTML =
       "Impossible de contacter le serveur local (" + e + ").<br>" +
       "Verifiez qu'il tourne bien : lancez <code>python server.py</code> dans le dossier du projet, " +
       "puis ouvrez <b>http://localhost:8000</b>.";
     errorBox.style.display = "block";
   } finally {
-    loading.style.display = "none";
+    if (myToken === checkToken) loading.style.display = "none";
   }
 }
 
@@ -542,6 +641,7 @@ document.getElementById("lat").addEventListener("keydown", (e) => { if (e.key ==
 document.getElementById("lon").addEventListener("keydown", (e) => { if (e.key === "Enter") checkCoverage(); });
 document.getElementById("paste").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("paste-btn").click(); });
 
+renderLegend();
 checkCoverage();
 </script>
 

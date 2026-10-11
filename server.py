@@ -9,11 +9,11 @@ de CORS), les APIs publiques :
     (API interne du site, utilisee en repli / pour les operateurs autres
     qu'Orange et en dehors de la Vienne)
 
-Pour l'operateur Orange dans le departement de la Vienne (86), les donnees
+Pour Orange et SFR dans le departement de la Vienne (86), les donnees
 proviennent directement du jeu de donnees officiel ouvert de l'ARCEP
 (polygones de couverture theorique, https://data.arcep.fr/mobile/couvertures_theoriques/),
-charge localement depuis data/vienne_orange_4g_precise.gpkg -- voir
-prepare_data.py pour regenerer ce fichier depuis une nouvelle publication
+charge localement depuis data/vienne_<operateur>_4g_precise.gpkg -- voir
+prepare_data.py pour regenerer ces fichiers depuis une nouvelle publication
 trimestrielle.
 
 Dependances supplementaires pour cette partie :
@@ -35,7 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PORT = int(os.environ.get("PORT", 8000))
-HOST = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
+HOST = os.environ.get("HOST", "0.0.0.0" if "PORT" in os.environ else "127.0.0.1")
 STATIC_DIR = Path(__file__).parent / "static"
 DATA_DIR = Path(__file__).parent / "data"
 USER_AGENT = "arcep-couverture-locale/1.0 (usage personnel)"
@@ -56,57 +56,92 @@ NIVEAU_LABELS = {
 }
 NIVEAU_NOMINAL_PCT = {"TBC": 100, "BC": 70, "CL": 25, "non_couverte": 0}
 
+# Fichiers officiels ARCEP (polygones 4G, Vienne) disponibles dans data/,
+# par code operateur. Generes par prepare_data.py.
+OFFICIAL_DATA_FILES = {
+    "20801": "vienne_orange_4g_precise.gpkg",
+    "20810": "vienne_sfr_4g_precise.gpkg",
+}
 
-class LocalVienneData:
-    """Donnees officielles ARCEP (polygones) pour Orange 4G, departement 86."""
+# Palettes officielles ARCEP par operateur (API /api/generalinfos/ de
+# monreseaumobile.arcep.fr, champs mapCouleurNiveau2..4 = limitee / bonne /
+# tres bonne couverture).
+OPERATOR_PALETTES = {
+    "20801": {"CL": "#ff8700", "BC": "#c06600", "TBC": "#864701"},  # Orange
+    "20810": {"CL": "#e47170", "BC": "#b54241", "TBC": "#880100"},  # SFR
+    "20815": {"CL": "#4be1bb", "BC": "#32ba98", "TBC": "#10745b"},  # Free
+    "20820": {"CL": "#3dd0ff", "BC": "#24b2de", "TBC": "#0d7495"},  # Bouygues
+}
+NON_COUVERTE_COLOR = "#f1ede6"
+INCONNUE_COLOR = "#b0b0b0"
+
+
+class LocalOfficialData:
+    """Donnees officielles ARCEP (polygones 4G, departement 86), une couche
+    par operateur dont le fichier est present dans data/."""
 
     def __init__(self):
-        self.available = False
-        self.gdf = None
-        self.bounds_wgs84 = None
+        self.layers = {}  # code operateur -> GeoDataFrame (Lambert-93)
+        self.bounds_wgs84 = {}  # code operateur -> (west, south, east, north)
         self.to_lambert93 = None
         self.to_wgs84 = None
 
-        precise_path = DATA_DIR / "vienne_orange_4g_precise.gpkg"
-        if not precise_path.exists():
-            return
         try:
             import geopandas as gpd
             from pyproj import Transformer
-
-            self.gdf = gpd.read_file(precise_path)
-            wgs84 = self.gdf.to_crs("EPSG:4326")
-            self.bounds_wgs84 = tuple(wgs84.total_bounds)  # west, south, east, north
-            self.to_lambert93 = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
-            self.to_wgs84 = Transformer.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
-            self.available = True
         except Exception as exc:
-            print(f"[donnees officielles Vienne indisponibles] {exc}")
+            print(f"[donnees officielles indisponibles] {exc}")
+            return
 
-    def covers(self, lat, lon):
-        if not self.available:
+        self.to_lambert93 = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+        self.to_wgs84 = Transformer.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+
+        for code, filename in OFFICIAL_DATA_FILES.items():
+            path = DATA_DIR / filename
+            if not path.exists():
+                continue
+            try:
+                gdf = gpd.read_file(path)
+                x0, y0, x1, y1 = gdf.total_bounds
+                corners = [
+                    self.to_wgs84.transform(x, y) for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))
+                ]
+                lons = [c[0] for c in corners]
+                lats = [c[1] for c in corners]
+                self.bounds_wgs84[code] = (min(lons), min(lats), max(lons), max(lats))
+                self.layers[code] = gdf
+            except Exception as exc:
+                print(f"[donnees officielles {OPERATORS.get(code, code)} indisponibles] {exc}")
+
+    def operators(self):
+        return list(self.layers)
+
+    def covers(self, operator_code, lat, lon):
+        bounds = self.bounds_wgs84.get(operator_code)
+        if bounds is None:
             return False
-        west, south, east, north = self.bounds_wgs84
+        west, south, east, north = bounds
         return west <= lon <= east and south <= lat <= north
 
-    def point_niveau(self, lat, lon):
+    def point_niveau(self, operator_code, lat, lon):
         """Renvoie 'TBC' / 'BC' / 'CL' / 'non_couverte', ou None si hors zone."""
-        if not self.covers(lat, lon):
+        if not self.covers(operator_code, lat, lon):
             return None
         from shapely.geometry import Point
 
         x, y = self.to_lambert93.transform(lon, lat)
         pt = Point(x, y)
-        for _, row in self.gdf.iterrows():
+        for _, row in self.layers[operator_code].iterrows():
             if row.geometry.contains(pt):
                 return row["niveau"]
         return "non_couverte"
 
-    def bbox_geojson(self, south, west, north, east):
+    def bbox_geojson(self, operator_code, south, west, north, east):
         """Polygones (en WGS84) de couverture, decoupes sur l'emprise demandee."""
-        if not self.available:
+        bounds = self.bounds_wgs84.get(operator_code)
+        if bounds is None:
             return None
-        vw, vs, ve, vn = self.bounds_wgs84
+        vw, vs, ve, vn = bounds
         if east < vw or west > ve or north < vs or south > vn:
             return None
         from shapely.geometry import box
@@ -117,7 +152,7 @@ class LocalVienneData:
         clip_box = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
         features = []
-        for _, row in self.gdf.iterrows():
+        for _, row in self.layers[operator_code].iterrows():
             clipped = row.geometry.intersection(clip_box)
             if clipped.is_empty:
                 continue
@@ -129,7 +164,7 @@ class LocalVienneData:
                     "properties": {
                         "niveau": niveau,
                         "label": NIVEAU_LABELS.get(niveau, niveau),
-                        "color": PALETTE_BY_NIVEAU.get(niveau, PALETTE["inconnue"]),
+                        "color": color_for_niveau(operator_code, niveau),
                     },
                     "geometry": clipped_wgs84.__geo_interface__,
                 }
@@ -137,7 +172,7 @@ class LocalVienneData:
         return {"type": "FeatureCollection", "features": features}
 
 
-VIENNE_DATA = LocalVienneData()
+OFFICIAL_DATA = LocalOfficialData()
 
 
 def http_get_json(url: str, timeout: float = 8.0):
@@ -199,18 +234,33 @@ def stat_couverture(insee: str, lon: float, lat: float, entite: str):
     return http_get_json(url)
 
 
-def classify(pct):
+def niveau_from_pct(pct):
     # Seuils exacts repris du code source du site officiel ARCEP
     # (page-*.js : t>90 TBC, 50<=t<=90 Bonne, 0<t<50 Limitee, t==0 Non couverte).
+    if pct > 90:
+        return "TBC"
+    if pct >= 50:
+        return "BC"
+    if pct > 0:
+        return "CL"
+    return "non_couverte"
+
+
+def classify(pct):
     if pct is None:
         return "Inconnue"
-    if pct > 90:
-        return "Tres bonne couverture"
-    if pct >= 50:
-        return "Bonne couverture"
-    if pct > 0:
-        return "Couverture limitee"
-    return "Zone non couverte"
+    return NIVEAU_LABELS[niveau_from_pct(pct)]
+
+
+def color_for_niveau(operator_code, niveau):
+    palette = OPERATOR_PALETTES.get(operator_code, OPERATOR_PALETTES["20801"])
+    return palette.get(niveau, NON_COUVERTE_COLOR)
+
+
+def color_for(pct, operator_code):
+    if pct is None:
+        return INCONNUE_COLOR
+    return color_for_niveau(operator_code, niveau_from_pct(pct))
 
 
 def build_operators_list(stat_payload):
@@ -232,34 +282,41 @@ def build_operators_list(stat_payload):
 def lookup_coverage(lat: float, lon: float):
     result = _lookup_coverage_live(lat, lon)
 
-    niveau = VIENNE_DATA.point_niveau(lat, lon)
-    if niveau is not None:
-        official_orange = {
-            "code": "20801",
-            "name": "Orange",
+    official = {}
+    for code in OFFICIAL_DATA.operators():
+        niveau = OFFICIAL_DATA.point_niveau(code, lat, lon)
+        if niveau is None:
+            continue
+        official[code] = {
+            "code": code,
+            "name": OPERATORS[code],
             "pct": None,
             "label": NIVEAU_LABELS.get(niveau, niveau),
             "niveau": niveau,
             "source": "officiel_arcep_vienne",
         }
-        if result.get("success"):
-            result["orange"] = official_orange
-            for op in result.get("operators", []):
-                if op["code"] == "20801":
-                    op.update(official_orange)
-        else:
-            # aucune donnee live (ex: hors reseau), mais la donnee officielle existe
-            result = {
-                "success": True,
-                "precision": "officiel_vienne",
-                "address_label": None,
-                "distance_m": None,
-                "commune": result.get("commune") if isinstance(result, dict) else None,
-                "citycode": None,
-                "orange": official_orange,
-                "operators": [official_orange],
-            }
-    return result
+    if not official:
+        return result
+
+    if result.get("success"):
+        for op in result.get("operators", []):
+            if op["code"] in official:
+                op.update(official[op["code"]])
+        if "20801" in official:
+            result["orange"] = official["20801"]
+        return result
+
+    # aucune donnee live (ex: hors reseau), mais les donnees officielles existent
+    return {
+        "success": True,
+        "precision": "officiel_vienne",
+        "address_label": None,
+        "distance_m": None,
+        "commune": None,
+        "citycode": None,
+        "orange": official.get("20801"),
+        "operators": list(official.values()),
+    }
 
 
 def _lookup_coverage_live(lat: float, lon: float):
@@ -341,36 +398,6 @@ def _lookup_coverage_live(lat: float, lon: float):
     return {"success": False, "message": "Aucune donnee de couverture ARCEP trouvee pour ce point."}
 
 
-# Palette officielle ARCEP (recuperee sur la legende "Niveau de couverture"
-# de monreseaumobile.arcep.fr, degrade orange utilise pour l'operateur Orange).
-PALETTE = {
-    "tres_bonne": "#864701",
-    "bonne": "#c06600",
-    "limitee": "#ff8700",
-    "non_couverte": "#f1ede6",
-    "inconnue": "#b0b0b0",
-}
-
-PALETTE_BY_NIVEAU = {
-    "TBC": PALETTE["tres_bonne"],
-    "BC": PALETTE["bonne"],
-    "CL": PALETTE["limitee"],
-    "non_couverte": PALETTE["non_couverte"],
-}
-
-
-def color_for(pct):
-    if pct is None:
-        return PALETTE["inconnue"]
-    if pct > 90:
-        return PALETTE["tres_bonne"]
-    if pct >= 50:
-        return PALETTE["bonne"]
-    if pct > 0:
-        return PALETTE["limitee"]
-    return PALETTE["non_couverte"]
-
-
 def fetch_grid_point(citycode, lat, lon, operator_code):
     try:
         r = stat_couverture(citycode, lon, lat, "adresse")
@@ -388,7 +415,7 @@ def fetch_grid_point(citycode, lat, lon, operator_code):
         "lat": lat,
         "lon": lon,
         "pct": pct,
-        "color": color_for(pct),
+        "color": color_for(pct, operator_code),
         "label": classify(pct) if pct is not None else "Non modelisee",
     }
 
@@ -402,22 +429,21 @@ MAX_CELLS_PER_SIDE = 16  # plafond pour rester rapide (<= 256 appels ARCEP)
 def coverage_bbox(south, west, north, east, operator_code="20801"):
     """Couverture pour l'emprise de carte demandee.
 
-    Pour Orange dans la Vienne : polygones officiels ARCEP exacts (vecteur),
-    decoupes sur l'emprise -- pas d'echantillonnage, precision native.
+    Pour un operateur dont on a le fichier officiel (Orange, SFR) dans la
+    Vienne : polygones officiels ARCEP exacts (vecteur), decoupes sur
+    l'emprise -- pas d'echantillonnage, precision native.
     Sinon : grille de points echantillonnes via l'API du site, alignee sur la
     vraie maille ARCEP de 50 m (voir plus bas).
     """
-    if operator_code == "20801":
-        geojson = VIENNE_DATA.bbox_geojson(south, west, north, east)
-        if geojson is not None:
-            return {
-                "success": True,
-                "mode": "vector",
-                "source": "officiel_arcep_vienne",
-                "operator": OPERATORS[operator_code],
-                "geojson": geojson,
-                "palette": PALETTE,
-            }
+    geojson = OFFICIAL_DATA.bbox_geojson(operator_code, south, west, north, east)
+    if geojson is not None:
+        return {
+            "success": True,
+            "mode": "vector",
+            "source": "officiel_arcep_vienne",
+            "operator": OPERATORS[operator_code],
+            "geojson": geojson,
+        }
 
     return _coverage_bbox_sampled(south, west, north, east, operator_code)
 
@@ -482,7 +508,6 @@ def _coverage_bbox_sampled(south, west, north, east, operator_code="20801"):
         "cell_size_m": stride_m,
         "native_cell_m": NATIVE_CELL_M,
         "points": points,
-        "palette": PALETTE,
     }
 
 
